@@ -1,0 +1,7 @@
+[package]
+name = "sciurus"
+version = "0.1.0"
+authors = ["Kazuki Oikawa <k@oikw.org>"]
+
+[dependencies]
+hyper = "0.9.10"
