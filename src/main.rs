@@ -20,10 +20,10 @@ fn main() {
         path.push("config.json");
         JsonConfig::new(&path, true)
     }));
-    config.write().unwrap().load();
+    config.write().unwrap().load().unwrap();
 
-    let mut onedrive = objectstore::OneDriveClient::new(
-        env!("SCIURUS_ONEDRIVE_CLIENT_ID").to_string(),
-        config.clone());
+    let mut onedrive = objectstore::OneDriveClient::new(env!("SCIURUS_ONEDRIVE_CLIENT_ID")
+                                                            .to_string(),
+                                                        config.clone());
     onedrive.access_test();
 }

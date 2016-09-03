@@ -7,9 +7,9 @@ mod onedrive;
 pub use self::onedrive::OneDriveClient;
 
 pub trait ObjectStore {
-    type Reader: Read+Seek;
+    type Reader: Read + Seek;
     type Writer: Write;
-    type ObjectIterator: Iterator<Item=String>;
+    type ObjectIterator: Iterator<Item = String>;
 
     fn open(&self, name: AsRef<str>) -> Result<Self::Reader>;
     fn create(&self, name: AsRef<str>) -> Result<Self::Writer>;

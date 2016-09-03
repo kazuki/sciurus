@@ -14,6 +14,7 @@ use json::JsonValue;
 pub trait Config {
     fn get(&self, key: &str) -> Option<Value>;
     fn set<T: Into<Value>>(&mut self, key: &str, value: T);
+    fn delete(&mut self, key: &str);
 
     fn get_str(&self, key: &str) -> Option<String> {
         self.get(key).and_then(|v| match v {
@@ -106,8 +107,8 @@ pub struct JsonConfig {
 
 #[derive(Debug)]
 pub enum JsonConfigError {
-    JsonError(json::Error),
-    IOError(std::io::Error),
+    Parse(json::Error),
+    Io(std::io::Error),
 }
 
 const BASE64_PREFIX: &'static str = "base64:";
@@ -122,35 +123,33 @@ impl JsonConfig {
     }
 
     pub fn load(&mut self) -> Result<(), JsonConfigError> {
-        let json_string = match File::open(&self.path) {
-            Err(e) => return Err(JsonConfigError::IOError(e)),
-            Ok(mut file) => {
-                let mut buf = String::new();
-                match file.read_to_string(&mut buf) {
-                    Err(e) => return Err(JsonConfigError::IOError(e)),
-                    Ok(_) => buf,
+        let mut json_string = String::new();
+        match File::open(&self.path).and_then(|mut file| file.read_to_string(&mut json_string)) {
+            Ok(_) => (),
+            Err(e) => {
+                match e.kind() {
+                    std::io::ErrorKind::NotFound => return Ok(()),
+                    _ => return Err(JsonConfigError::Io(e)),
                 }
             }
         };
-        match json::parse(&json_string) {
-            Ok(v) => {
-                self.data = v;
-                if !self.data.is_object() {
-                    Err(JsonConfigError::JsonError(json::Error::WrongType("not object"
-                        .to_string())))
-                } else {
+        json::parse(&json_string)
+            .map_err(JsonConfigError::Parse)
+            .and_then(|v| {
+                if v.is_object() {
+                    self.data = v;
                     Ok(())
+                } else {
+                    Err(JsonConfigError::Parse(json::Error::WrongType("not object".to_string())))
                 }
-            }
-            Err(e) => Err(JsonConfigError::JsonError(e)),
-        }
+            })
     }
 
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let mut file = try!(File::create(&self.path));
-        let str = self.data.pretty(4);
-        try!(file.write_all(str.as_bytes()));
-        Ok(())
+        File::create(&self.path).and_then(|mut file| {
+            let str = self.data.pretty(4);
+            file.write_all(str.as_bytes())
+        })
     }
 
     fn lookup(&self, key: &str) -> &JsonValue {
@@ -169,15 +168,15 @@ impl JsonConfig {
 
     fn lookup_mut(&mut self, key: &str) -> &mut JsonValue {
         let keys: Vec<&str> = key.split('.').collect();
-        Self::_lookup_mut(&mut self.data, &keys)
+        &mut Self::_lookup_parent(&mut self.data, &keys)[*keys.last().unwrap()]
     }
 
-    fn _lookup_mut<'a>(node: &'a mut JsonValue, keys: &[&str]) -> &'a mut JsonValue {
+    fn _lookup_parent<'a>(node: &'a mut JsonValue, keys: &[&str]) -> &'a mut JsonValue {
         let (name, keys2) = keys.split_first().unwrap();
         if keys2.is_empty() {
-            &mut node[*name]
+            node
         } else {
-            Self::_lookup_mut(&mut node[*name], keys2)
+            Self::_lookup_parent(&mut node[*name], keys2)
         }
     }
 
@@ -214,6 +213,14 @@ impl Config for JsonConfig {
             self.save().unwrap();
         }
     }
+
+    fn delete(&mut self, key: &str) {
+        let keys: Vec<&str> = key.split('.').collect();
+        Self::_lookup_parent(&mut self.data, &keys).remove(*keys.last().unwrap());
+        if self.auto_save {
+            self.save().unwrap();
+        }
+    }
 }
 
 #[cfg(target_os="linux")]
@@ -224,7 +231,7 @@ pub fn get_config_dir_path() -> PathBuf {
             let mut x = PathBuf::from(std::env::home_dir().unwrap());
             x.push(".config");
             x
-        },
+        }
     };
     path.push(env!("CARGO_PKG_NAME"));
     path
@@ -269,5 +276,15 @@ fn test() {
         assert_eq!("value", config.get_str("foo").unwrap());
         assert_eq!("bar", config.get_str("hoge.piyo").unwrap());
         assert_eq!("helloworld", config.get_str("test").unwrap());
+        config.delete("test");
+        assert!(config.get("test").is_none());
     }
+    {
+        assert!(JsonConfig::new("notfound.json", false).load().is_ok());
+        std::fs::File::create(path)
+            .and_then(|mut f| f.write_all(b"{\"broken\": \"json"))
+            .unwrap();
+        assert!(JsonConfig::new(path, false).load().is_err());
+    }
+    std::fs::remove_file(path).unwrap();
 }
